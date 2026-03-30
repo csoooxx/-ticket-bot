@@ -31,12 +31,12 @@ npm install puppeteer
 | 參數 | 說明 | 範例 |
 |------|------|------|
 | `activityUrl` | 活動節目場次頁面網址 | `https://tixcraft.com/activity/detail/xxx` |
-| `targetDate` | 目標場次日期（包含即匹配） | `'05/03'` |
+| `targetDate` | 目標場次日期（包含即匹配） | `'2026/03/31'` |
 | `targetArea` | 目標票區關鍵字 | `'A區'` |
 | `ticketCount` | 購買張數 | `2` |
 | `refreshInterval` | 刷新間隔（毫秒） | `400` |
 
-### 2. 修改 Chrome 路徑（如有需要）
+### 2. 修改 Chrome 路徑
 
 在 `launchBrowser()` 函式中找到 `executablePath`，修改為你本機的 Chrome 路徑：
 
@@ -59,12 +59,11 @@ node tixcraft.js
 3. 前往活動頁面，持續監控直到指定場次開賣
 4. 開賣後自動進入票區選擇頁面
 5. 自動選擇目標票區與張數
-6. **手動完成驗證碼**後即可結帳
+6. 腳本自動完成驗證碼
 
 ---
 
 ## 注意事項
 
-- 驗證碼需手動輸入，腳本不會自動處理
 - `refreshInterval` 不建議設定低於 `300` 毫秒
 - 本腳本僅供學習 Puppeteer 使用
