@@ -8,16 +8,16 @@ const sharp = require('sharp');
 const CONFIG = {
   //活動頁面網址（開賣前就能拿到）
   // 到拓元找到你要的活動，點進「節目場次」頁面，複製網址貼在這裡
-  activityUrl:'https://tixcraft.com/activity/detail/26_mltr',
+  activityUrl:'',
 
   //目標場次的日期時間（用這個來找到正確的場次）
   // 填你在頁面上看到的日期時間文字，不用完全一樣，「包含」就會匹配
   // 例如：'2026/05/03' 或 '05/03 18:30' 或 '05/03'
-  targetDate: '2026/07/05',
+  targetDate: '',
 
   //想要的票區關鍵字（腳本會自動選包含這個文字的票區）
 
-  targetArea: '8800區',
+  targetArea: '',
 
   //想買的張數
   ticketCount: 1,
