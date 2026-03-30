@@ -1,6 +1,6 @@
-
-
 const puppeteer = require('puppeteer');
+const Tesseract = require('tesseract.js');
+const sharp = require('sharp');
 
 // ============================
 //  設定區（每次搶票前修改這裡）
@@ -8,19 +8,19 @@ const puppeteer = require('puppeteer');
 const CONFIG = {
   //活動頁面網址（開賣前就能拿到）
   // 到拓元找到你要的活動，點進「節目場次」頁面，複製網址貼在這裡
-  activityUrl:'',
+  activityUrl:'https://tixcraft.com/activity/detail/26_lany',
 
   //目標場次的日期時間（用這個來找到正確的場次）
   // 填你在頁面上看到的日期時間文字，不用完全一樣，「包含」就會匹配
   // 例如：'2026/05/03' 或 '05/03 18:30' 或 '05/03'
-  targetDate: '',
+  targetDate: '2026/09/26 ',
 
   //想要的票區關鍵字（腳本會自動選包含這個文字的票區）
 
-  targetArea: '',
+  targetArea: '紅1區看台座位 A~E 3980-7880',
 
   //想買的張數
-  ticketCount: 2,
+  ticketCount: 1,
 
   // 刷新間隔（毫秒），不建議低於 300
   refreshInterval: 400,
@@ -245,36 +245,131 @@ async function selectTicketCount(page) {
   }
 }
 
-async function waitForCaptcha(page) {
+async function preprocessCaptcha(imageBuffer) {
+  // 提取紅色通道：白色文字 R=255，藍色背景 R≈0，天然黑白分離
+  return sharp(imageBuffer)
+    .removeAlpha()
+    .extractChannel('red')
+    .threshold(200)
+    .resize({ width: 400, kernel: 'lanczos3' })
+    .png()
+    .toBuffer();
+}
+
+async function recognizeCaptcha(imageBuffer) {
+  const processed = await preprocessCaptcha(imageBuffer);
+
+  const { data } = await Tesseract.recognize(processed, 'eng', {
+    tessedit_char_whitelist: 'abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ',
+    tessedit_pageseg_mode: '7', // 單行文字模式
+  });
+
+  // 拓元驗證碼固定 4 碼小寫英文，移除非字母字元後取前 4 碼
+  const cleaned = data.text.replace(/[^a-zA-Z]/g, '').toLowerCase();
+  const result = cleaned.substring(0, 4);
+  log(`  OCR 辨識結果：「${result}」（原始：「${cleaned}」，信心度 ${Math.round(data.confidence)}%）`);
+  return { text: result, confidence: data.confidence };
+}
+
+async function solveCaptcha(page) {
+  const MAX_ATTEMPTS = 10;
+
   log('');
   log('==========================================');
-  log('  請到瀏覽器視窗手動完成驗證碼！');
-  log('  驗證碼通過後，腳本會自動繼續下一步');
+  log('  正在自動辨識驗證碼...');
   log('==========================================');
   log('');
 
-  try {
-    await page.waitForFunction(
-      () => {
-        const url = window.location.href;
-        return (
-          url.includes('/ticket/order') ||
-          url.includes('/ticket/checkout') ||
-          url.includes('/order')
-        );
-      },
-      { timeout: 120000 }
-    );
-    log('驗證碼已通過！');
-  } catch (error) {
-    log('等待驗證碼逾時（2 分鐘），請確認頁面狀態');
+  for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
+    log(`第 ${attempt}/${MAX_ATTEMPTS} 次嘗試`);
+
+    try {
+      // 等待驗證碼圖片載入
+      await page.waitForSelector('#TicketForm_verifyCode-image', { timeout: 5000 });
+      await delay(500);
+
+      // 截取驗證碼圖片
+      const imgElement = await page.$('#TicketForm_verifyCode-image');
+      const imageBuffer = await imgElement.screenshot({ encoding: 'binary' });
+
+      // OCR 辨識
+      const { text, confidence } = await recognizeCaptcha(imageBuffer);
+
+      if (text.length < 4) {
+        log(`  辨識結果太短（${text.length} 字），刷新驗證碼重試...`);
+        await page.click('#TicketForm_verifyCode-image');
+        await delay(800);
+        continue;
+      }
+
+      // 清空輸入框並填入辨識結果
+      const input = await page.$('#TicketForm_verifyCode');
+      await input.click({ clickCount: 3 });
+      await input.type(text, { delay: 30 });
+
+      // 勾選同意
+      await page.evaluate(() => {
+        const checkbox = document.querySelector('#TicketForm_agree');
+        if (checkbox && !checkbox.checked) checkbox.click();
+      });
+
+      // 點擊確認張數
+      await page.click('button.btn-green');
+      log('  已送出，等待結果...');
+
+      // 等待頁面跳轉或錯誤訊息
+      const passed = await page.waitForFunction(
+        () => {
+          const url = window.location.href;
+          if (url.includes('/ticket/order') || url.includes('/ticket/checkout') || url.includes('/order')) {
+            return true;
+          }
+          // 檢查是否有驗證碼錯誤訊息出現（表示答錯了）
+          const errEl = document.querySelector('.help-block, .error, .text-danger');
+          if (errEl && errEl.textContent.includes('驗證碼')) return false;
+          return false;
+        },
+        { timeout: 3000 }
+      ).then(() => true).catch(() => false);
+
+      if (passed) {
+        log('驗證碼通過！');
+        return;
+      }
+
+      log('  驗證碼錯誤，重新選張數並刷新重試...');
+      // 驗證碼錯誤後張數會被重置，需要重新選
+      await selectTicketCount(page);
+      // 點擊圖片刷新驗證碼
+      await page.click('#TicketForm_verifyCode-image').catch(() => {});
+      await delay(800);
+
+    } catch (error) {
+      log(`  第 ${attempt} 次發生錯誤：${error.message}`);
+      await delay(500);
+    }
   }
+
+  // 超過最大嘗試次數，fallback 到手動
+  log('');
+  log('==========================================');
+  log('  自動辨識未成功，請手動輸入驗證碼！');
+  log('==========================================');
+  log('');
+  await page.waitForFunction(
+    () => {
+      const url = window.location.href;
+      return url.includes('/ticket/order') || url.includes('/ticket/checkout') || url.includes('/order');
+    },
+    { timeout: 120000 }
+  );
+  log('驗證碼已通過（手動）！');
 }
 
 async function main() {
   console.log('');
   console.log('========================================');
-  console.log('   拓元搶票腳本 v2.0（依日期選場次）');
+  console.log('   拓元搶票腳本 v3.0（自動驗證碼）');
   console.log('========================================');
   console.log('');
   console.log(`  活動網址  ：${CONFIG.activityUrl}`);
@@ -289,7 +384,7 @@ async function main() {
     await waitAndSelectSession(page);
     await selectArea(page);
     await selectTicketCount(page);
-    await waitForCaptcha(page);
+    await solveCaptcha(page);
 
     log('');
     log('腳本流程執行完畢！');

@@ -13,6 +13,8 @@
   "dependencies": {
     "axios": "^1.14.0",
     "cheerio": "^1.2.0",
-    "puppeteer": "^24.40.0"
+    "puppeteer": "^24.40.0",
+    "sharp": "^0.34.5",
+    "tesseract.js": "^7.0.0"
   }
 }
