@@ -1,13 +1,12 @@
-# 拓元搶票腳本 v2.0
+# 拓元腳本 
 
-使用 Puppeteer 自動監控拓元售票網站，開賣時自動進入選位流程。
+使用 Puppeteer 自動監控拓元售票網站
 
 ---
 
 ## 環境需求
 
-- Node.js v18 以上
-- Google Chrome（已安裝於本機）
+- Node.js v18 
 
 ---
 
@@ -16,6 +15,12 @@
 ```bash
 npm install
 ```
+## 使用前先安裝puppeteer
+```bash
+npm install puppeteer
+```
+
+
 
 ---
 
