@@ -1,13 +1,4 @@
-/**
- * 拓元腳本 - 學習用框架 v2.0
- *
- *
- *
- * 使用前
- *   1. npm install puppeteer
- *   2. 修改下方 CONFIG 設定
- *   3. node tixcraft.js
- */
+
 
 const puppeteer = require('puppeteer');
 
@@ -17,19 +8,19 @@ const puppeteer = require('puppeteer');
 const CONFIG = {
   //活動頁面網址（開賣前就能拿到）
   // 到拓元找到你要的活動，點進「節目場次」頁面，複製網址貼在這裡
-  activityUrl: '',
+  activityUrl:'https://tixcraft.com/activity/detail/25_lioneers',
 
   //目標場次的日期時間（用這個來找到正確的場次）
   // 填你在頁面上看到的日期時間文字，不用完全一樣，「包含」就會匹配
   // 例如：'2026/05/03' 或 '05/03 18:30' 或 '05/03'
-  targetDate: ' ',
+  targetDate: '2026/04/11 ',
 
   //想要的票區關鍵字（腳本會自動選包含這個文字的票區）
 
-  targetArea: '',
+  targetArea: '獅心瘋',
 
   //想買的張數
-  ticketCount: 1,
+  ticketCount: 2,
 
   // 刷新間隔（毫秒），不建議低於 300
   refreshInterval: 400,
@@ -136,7 +127,10 @@ async function waitAndSelectSession(page) {
 
             const target = link || btn;
             if (target) {
-              const url = link ? link.href : btn.getAttribute('data-href');
+              const rawUrl = link ? link.href : btn.getAttribute('data-href');
+                              const url = rawUrl && rawUrl.startsWith('http')
+                                ? rawUrl
+                                : new URL(rawUrl, window.location.origin).href;
               const isDisabled =
                 target.classList.contains('disabled') ||
                 target.hasAttribute('disabled') ||
