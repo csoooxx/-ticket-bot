@@ -22,6 +22,14 @@ const CONFIG = {
   //想買的張數
   ticketCount: 1,
 
+  // 開賣時間（格式：'2026/05/03 11:00:00'）
+  // 腳本會在開賣前 5 秒才開始刷新搶票，避免太早刷新被 ban
+  // 留空則立即開始搶票（原有行為）
+  saleTime: '',
+
+  // 提前幾秒開始搶票（預設 5 秒）
+  headStartSeconds: 5,
+
   // 刷新間隔（毫秒），不建議低於 300
   refreshInterval: 400,
 
@@ -83,6 +91,51 @@ async function waitForLogin(page) {
 
   log('登入成功！');
   await delay(1000);
+}
+
+async function waitUntilSaleTime() {
+  if (!CONFIG.saleTime) {
+    log('未設定開賣時間，直接開始搶票');
+    return;
+  }
+
+  const saleDate = new Date(CONFIG.saleTime);
+  if (isNaN(saleDate.getTime())) {
+    log(`開賣時間格式錯誤：「${CONFIG.saleTime}」，直接開始搶票`);
+    return;
+  }
+
+  const startAt = new Date(saleDate.getTime() - CONFIG.headStartSeconds * 1000);
+
+  log(`開賣時間：${CONFIG.saleTime}`);
+  log(`將在開賣前 ${CONFIG.headStartSeconds} 秒開始搶票`);
+  log('');
+
+  while (true) {
+    const now = new Date();
+    const diffMs = startAt.getTime() - now.getTime();
+
+    if (diffMs <= 0) {
+      log('時間到！開始搶票！');
+      log('');
+      return;
+    }
+
+    const totalSeconds = Math.ceil(diffMs / 1000);
+    const hours = Math.floor(totalSeconds / 3600);
+    const minutes = Math.floor((totalSeconds % 3600) / 60);
+    const seconds = totalSeconds % 60;
+
+    const parts = [];
+    if (hours > 0) parts.push(`${hours} 小時`);
+    if (minutes > 0) parts.push(`${minutes} 分`);
+    parts.push(`${seconds} 秒`);
+
+    process.stdout.write(`\r  倒數中... ${parts.join(' ')} 後開始搶票   `);
+
+    // 剩餘超過 60 秒時每秒更新，最後 60 秒內每 100ms 更新以提高精度
+    await delay(totalSeconds > 60 ? 1000 : 100);
+  }
 }
 
 async function waitAndSelectSession(page) {
@@ -376,11 +429,16 @@ async function main() {
   console.log(`  目標場次  ：包含「${CONFIG.targetDate}」`);
   console.log(`  目標票區  ：包含「${CONFIG.targetArea}」`);
   console.log(`  購買張數  ：${CONFIG.ticketCount}`);
+  console.log(`  開賣時間  ：${CONFIG.saleTime || '未設定（立即開始）'}`);
+  if (CONFIG.saleTime) {
+    console.log(`  提前搶票  ：開賣前 ${CONFIG.headStartSeconds} 秒`);
+  }
   console.log('');
 
   try {
     const { browser, page } = await launchBrowser();
     await waitForLogin(page);
+    await waitUntilSaleTime();
     await waitAndSelectSession(page);
     await selectArea(page);
     await selectTicketCount(page);
