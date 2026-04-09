@@ -20,12 +20,12 @@ const CONFIG = {
   targetArea: '',
 
   //想買的張數
-  ticketCount: 1,
+  ticketCount: 2,
 
   // 開賣時間（格式：'2026/05/03 11:00:00'）
   // 腳本會在開賣前 5 秒才開始刷新搶票，避免太早刷新被 ban
   // 留空則立即開始搶票（原有行為）
-  saleTime: '',
+  saleTime: '2026/04/03 11:00:00',
 
   // 提前幾秒開始搶票（預設 5 秒）
   headStartSeconds: 5,
