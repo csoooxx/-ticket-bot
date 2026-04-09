@@ -465,32 +465,20 @@ async function dismissAgeModal(page) {
   }
 }
 
-// ---- 注入登入 token 到瀏覽器 (TODO: U1 解掉才能寫) ----
+// ---- 注入登入 token 到瀏覽器 ----
+// U1 已確認：token 存放在 cookie 'user'（JSON 字串），沒有用 localStorage
 async function injectAuth(page, loginResp) {
-  // TODO(U1): 等你從 DevTools 查出 token 實際存放位置後填這裡
-  //
-  // 三種可能的實作範例,等確認後只留一種:
-  //
-  // ---- 方案 A: localStorage ----
-  // await page.evaluateOnNewDocument((resp) => {
-  //   localStorage.setItem('token', resp.token);
-  //   localStorage.setItem('userInfo', JSON.stringify(resp));
-  // }, loginResp);
-  //
-  // ---- 方案 B: cookie ----
-  // await page.setCookie({
-  //   name:   'token',
-  //   value:  loginResp.token,
-  //   domain: '.ticketplus.com.tw',
-  //   path:   '/',
-  //   secure: true,
-  //   httpOnly: false,
-  // });
-  //
-  // ---- 方案 C: 兩者並存 ----
-  // 以上兩個都做一次
-
-  throw new Error('injectAuth 未實作:等待 U1 (token 存放位置) 解掉');
+  // ticketplus 把整個 user 物件序列化成 JSON 塞進單一 cookie 'user'
+  // loginResp 結構: { account, id, access_token, refresh_token, access_token_expires_in, verifyEmail }
+  const userCookieValue = encodeURIComponent(JSON.stringify(loginResp));
+  await page.setCookie({
+    name:     'user',
+    value:    userCookieValue,
+    domain:   '.ticketplus.com.tw',
+    path:     '/',
+    secure:   true,
+    httpOnly: false,
+  });
 }
 
 // ---- 在場次頁點目標場次的「立即購買」按鈕 ----
