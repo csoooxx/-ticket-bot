@@ -5,11 +5,11 @@ const readline = require('readline');
 
 const config = {
   // 活動網址
-  activityUrl: 'https://ticketplus.com.tw/activity/33c0f6ee608becee01068c72b014a653',
+  activityUrl: '',
   // 目標場次名稱
   targetName: 'Hi-Fi Un!corn 2026 ASIA LIVEHOUSE TOUR - FIRST MOVE in TAIPEI',
   // 目標場次日期 (格式: YYYY-MM-DD, 會用 includes 比對 sessions.json 的 date 字串)
-  targetDate: '2026-05-23',
+  targetDate: '',
   // 購買張數
   ticketCount: 1,
   // 開賣時間 (格式: 'YYYY-MM-DD HH:mm:ss'; 留空字串 '' 表示立即模式)
@@ -20,8 +20,8 @@ const config = {
   apiPollInterval: 300,
   // 本機 Chrome 路徑
   chromePath: '/Volumes/NVme/Google Chrome.app/Contents/MacOS/Google Chrome',
-  // 目標票區名稱 (A區/B區)
-  targetArea: 'A區',
+  // 目標票區名稱 (A區、B區...等)，留空字串表示不指定，直接選第一個有票的區
+  targetArea: '',
 };
 
     function delay(ms) {
