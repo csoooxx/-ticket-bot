@@ -20,6 +20,8 @@ const config = {
   apiPollInterval: 300,
   // 本機 Chrome 路徑
   chromePath: '/Volumes/NVme/Google Chrome.app/Contents/MacOS/Google Chrome',
+  // 目標票區名稱 (A區/B區)
+  targetArea: 'A區',
 };
 
     function delay(ms) {
@@ -85,8 +87,116 @@ const config = {
   });
 }
 
-const API_BASE_URL = 'https://api.ticketplus.com.tw';
-const CONFIG_API_BASE='https://apis.ticketplus.com.tw';
+const API_BASE_URL   = 'https://api.ticketplus.com.tw';
+const QUEUE_API_BASE = 'https://queue.ticketplus.com.tw';
+const CONFIG_API_BASE = 'https://apis.ticketplus.com.tw';
+
+// ---- v0.2 新增: 取得票區清單 ----
+async function fetchTicketAreas(activityId) {
+  const url = `${CONFIG_API_BASE}/config/api/v1/getS3?path=event/${activityId}/ticketAreas.json&_=${Date.now()}`;
+  const res = await axios.get(url, { headers: COMMON_HEADERS, timeout: 10000 });
+  return res.data.ticketAreas || [];
+}
+
+// ---- v0.2 新增: 取得票種清單 ----
+async function fetchProducts(activityId) {
+  const url = `${CONFIG_API_BASE}/config/api/v1/getS3?path=event/${activityId}/products.json&_=${Date.now()}`;
+  const res = await axios.get(url, { headers: COMMON_HEADERS, timeout: 10000 });
+  return res.data.products || [];
+}
+
+// ---- v0.2 新增: 以票區名稱匹配 ticketAreaId + productId ----
+function findTargetProduct(ticketAreas, products, targetAreaName, sessionId) {
+  const area = ticketAreas.find(a =>
+    a.name === targetAreaName && (!sessionId || a.sessionId === sessionId)
+  );
+  if (!area) throw new Error(`找不到目標票區: ${targetAreaName}`);
+
+  const product = products.find(p =>
+    p.ticketAreaId === area.ticketAreaId && (!sessionId || p.sessionId === sessionId)
+  );
+  if (!product) throw new Error(`找不到「${targetAreaName}」對應的票種`);
+
+  log(`目標票區: ${area.name} (${area.ticketAreaId}), 票種: ${product.name} (${product.productId}), 價格: NT.${product.price}`);
+  return { area, product };
+}
+
+// ---- v0.2 新增: 排隊 (errCode=137 → 等 waitSecond → retry, errCode=00 → 回傳 uuid) ----
+async function enqueue(accessToken, productId, count) {
+  const body = {
+    products: [{ productId, count }],
+    reserveSeats: true,
+    consecutiveSeats: false,
+    finalizedSeats: true,
+  };
+  const authHeaders = {
+    ...COMMON_HEADERS,
+    'authorization': `Bearer ${accessToken}`,
+    'content-type': 'application/json',
+  };
+
+  let attempt = 0;
+  while (true) {
+    attempt++;
+    const url = `${QUEUE_API_BASE}/queue/api/v1/enqueue?_=${Date.now()}`;
+    log(`enqueue 第 ${attempt} 次...`);
+    const res = await axios.post(url, body, { headers: authHeaders, timeout: 15000 });
+    const data = res.data;
+
+    if (data.errCode === '00') {
+      log(`排隊通過! uuid=${data.uuid}`);
+      return data.uuid;
+    }
+    if (data.errCode === '137') {
+      const waitSec = data.waitSecond || 10;
+      log(`排隊中 (errCode=137), 等待 ${waitSec} 秒後重試...`);
+      await delay(waitSec * 1000);
+      continue;
+    }
+    throw new Error(`enqueue 失敗: errCode=${data.errCode} msg=${data.errMsg}`);
+  }
+}
+
+// ---- v0.2 新增: 保留票券 ----
+async function reserveTicket(accessToken, productId, count, uuid) {
+  const url = `${API_BASE_URL}/ticket/api/v1/reserve?_=${Date.now()}`;
+  const body = {
+    products: [{ productId, count }],
+    reserveSeats: true,
+    consecutiveSeats: false,
+    finalizedSeats: true,
+    uuid,
+  };
+  const authHeaders = {
+    ...COMMON_HEADERS,
+    'authorization': `Bearer ${accessToken}`,
+    'content-type': 'application/json',
+  };
+
+  log('呼叫 reserve API...');
+  const res = await axios.post(url, body, { headers: authHeaders, timeout: 15000 });
+  const data = res.data;
+  if (data.errCode !== '00') throw new Error(`reserve 失敗: errCode=${data.errCode} msg=${data.errMsg}`);
+
+  log(`保留成功! orderId=${data.orderId}, 剩餘 ${data.remainSecond} 秒`);
+  return data;
+}
+
+// ---- v0.2 新增: 取消保留 (備用) ----
+async function releaseOrder(accessToken, orderId) {
+  const url = `${API_BASE_URL}/ticket/api/v1/release?_=${Date.now()}`;
+  const authHeaders = {
+    ...COMMON_HEADERS,
+    'authorization': `Bearer ${accessToken}`,
+    'content-type': 'application/json',
+  };
+  log(`取消保留 orderId=${orderId}...`);
+  const res = await axios.post(url, { orderId }, { headers: authHeaders, timeout: 10000 });
+  const data = res.data;
+  if (data.errCode !== '00') log(`[WARN] release 失敗: errCode=${data.errCode}`);
+  else log('已取消保留');
+  return data;
+}
 
 const COMMON_HEADERS = {'accept'        : 'application/json, text/plain, */*',
   'accept-language': 'zh-TW,zh;q=0.9,en;q=0.8',
@@ -478,11 +588,141 @@ async function main() {
     }
   }
 
+  // ===== v0.2 (U5) 選位+排隊+保留+確認流程 =====
+
+  // --- Step 10: 等待頁面導航到 /order/ ---
+  log('Step 10: 等待頁面導航到 /order/ ...');
+  try {
+    await page.waitForFunction(
+      () => window.location.pathname.includes('/order/'),
+      { timeout: 15000 }
+    );
+    log(`進入選票頁: ${page.url()}`);
+  } catch {
+    log('[WARN] 等待 /order/ 超時，嘗試直接導航...');
+    await page.goto(
+      `https://ticketplus.com.tw/order/${activityId}/${sessionId}`,
+      { waitUntil: 'domcontentloaded' }
+    );
+  }
+  await delay(1500); // 等 Vue + ticketAreas/products API 初始化完成
+
+  // --- Step 11: 取得票區 + 票種 → 確認目標 productId ---
+  log('Step 11: 取得票區與票種資料...');
+  const ticketAreas = await fetchTicketAreas(activityId);
+  const products = await fetchProducts(activityId);
+  findTargetProduct(ticketAreas, products, config.targetArea, sessionId);
+
+  // --- Step 12: UI 操作 — 展開票區 → 點 + → 點下一步 ---
+  log(`Step 12: UI 操作，選「${config.targetArea}」× ${config.ticketCount} 張...`);
+
+  // 12-A: 點擊目標票區展開
+  // DOM 實測: 票區是 Vuetify v-expansion-panel，不是 .v-btn
+  // 初始狀態所有票區皆收合，點擊 header 後展開 → 才出現 +/- 和數量控制
+  const areaClicked = await page.evaluate((areaName) => {
+    const headers = [...document.querySelectorAll('.v-expansion-panel-header')];
+    const areaHeader = headers.find(h => h.textContent.includes(areaName));
+    if (!areaHeader) return false;
+    areaHeader.click();
+    return true;
+  }, config.targetArea);
+
+  if (areaClicked) {
+    log(`「${config.targetArea}」已展開`);
+    await delay(600);
+  } else {
+    log(`[WARN] 找不到「${config.targetArea}」按鈕，繼續嘗試...`);
+  }
+
+  // 12-B: 點 + 按鈕 ticketCount 次
+  // DOM 實測: + 是 icon button <i class="mdi mdi-plus">，無 textContent
+  for (let i = 0; i < config.ticketCount; i++) {
+    const added = await page.evaluate(() => {
+      const plusIcon = document.querySelector('.mdi-plus');
+      if (!plusIcon) return false;
+      const plusBtn = plusIcon.closest('.v-btn');
+      if (plusBtn) { plusBtn.click(); return true; }
+      return false;
+    });
+    if (!added) log(`[WARN] 第 ${i + 1} 次點 + 失敗`);
+    await delay(300);
+  }
+  log(`已選 ${config.ticketCount} 張票`);
+
+  // 12-C: 點「下一步」
+  // DOM 實測: 按鈕有專屬 class .nextBtn，disabled 時有 .v-btn--disabled
+  await delay(500);
+  const nextBtnResult = await page.evaluate(() => {
+    const nextBtn = document.querySelector('.nextBtn');
+    if (!nextBtn) return 'not-found';
+    if (nextBtn.classList.contains('v-btn--disabled')) return 'disabled';
+    nextBtn.click();
+    return 'clicked';
+  });
+
+  if (nextBtnResult === 'clicked') {
+    log('已點「下一步」，Vue app 正在處理排隊/保留...');
+  } else if (nextBtnResult === 'disabled') {
+    log('[WARN] 「下一步」仍為 disabled，張數可能未成功選取，等待後重試...');
+    await delay(1500);
+    // 重試: 再點一次 + 然後點下一步
+    await page.evaluate(() => {
+      const plusIcon = document.querySelector('.mdi-plus');
+      if (plusIcon) { const btn = plusIcon.closest('.v-btn'); if (btn) btn.click(); }
+    });
+    await delay(500);
+    await page.evaluate(() => {
+      const btn = document.querySelector('.nextBtn');
+      if (btn && !btn.classList.contains('v-btn--disabled')) btn.click();
+    });
+  } else {
+    log('[WARN] 找不到「下一步」按鈕');
+  }
+
+  // --- Step 15: 等待確認選位結果頁 (排隊時間不定，最多等 3 分鐘) ---
+  log('Step 15: 等待導航到 /confirmSeat/ ...');
+  try {
+    await page.waitForFunction(
+      () => window.location.pathname.includes('/confirmSeat/'),
+      { timeout: 180000 }
+    );
+    log('已進入確認選位結果頁!');
+  } catch {
+    log('[ERROR] 等待 /confirmSeat/ 超時，請手動確認頁面狀態');
+    log('瀏覽器保持開啟，請手動繼續');
+    return;
+  }
+  await delay(1000);
+
+  // --- Step 16: log 座位資訊 + 點「下一步」 ---
+  log('Step 16: 讀取座位資訊...');
+  const seatTexts = await page.evaluate(() => {
+    const els = document.querySelectorAll('p, span, h1, h2, h3, .v-list-item__title, .v-list-item__subtitle');
+    return [...new Set([...els].map(el => el.textContent.trim()).filter(t => t.length > 0 && t.length < 80))].slice(0, 25);
+  });
+  log(`確認選位頁文字: ${JSON.stringify(seatTexts)}`);
+
+  const confirmNext = await page.evaluate(() => {
+    const btn = [...document.querySelectorAll('.v-btn')].find(b =>
+      b.textContent.trim() === '下一步' &&
+      !b.disabled &&
+      !b.classList.contains('v-btn--disabled')
+    );
+    if (btn) { btn.click(); return true; }
+    return false;
+  });
+
+  if (confirmNext) {
+    log('已點確認選位頁「下一步」，進入 Step 3 確認資料 (U6 待實作)');
+  } else {
+    log('[WARN] 確認選位頁「下一步」找不到，請手動確認');
+  }
+
   log('');
   log('=========================================');
-  log('  v0.1 骨架流程結束');
-  log('  後續選位 / 驗證碼 / 付款流程待 U5/U6 解掉後擴充');
-  log('  瀏覽器保持開啟,請手動完成剩餘步驟');
+  log('  v0.2 (U5) 選位+排隊+保留 流程完成');
+  log('  後續確認資料/付款流程待 U6 實作');
+  log('  瀏覽器保持開啟');
   log('=========================================');
 }
 
